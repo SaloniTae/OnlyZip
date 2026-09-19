@@ -303,20 +303,73 @@ cookie, and the blur overlay is what stops them from seeing the password it type
 5. Rotate any BYOK provider keys that were entered into it (OpenAI, Anthropic, Gemini, Groq,
    DeepSeek, Mistral, xAI, Together, OpenRouter).
 
-## 8. Files in this folder
+## 8. The rest of the bundle, decoded
 
-| file | what it is |
-|---|---|
-| **`content.annotated.js`** | **the deliverable** — complete `content.js`, deobfuscated, every identifier renamed, every section annotated, with an appendix of the full message protocol. Verified to parse (`node --check`) and to contain the identical set of 429 string literals as the machine deobfuscation. |
-| `content.webcrack.js` | the raw webcrack output for `content.js` (1 264 lines) — the machine baseline `content.annotated.js` was derived from and verified against. |
-| `background.webcrack.js` | the raw webcrack output for `background.js` (4 313 lines) — the source of §6 above. |
-| `ANALYSIS.md` | this report. |
+All ten obfuscated scripts were decoded with the same pipeline and are concatenated, in zip
+order and delimited by banners, in [`bundle.deobfuscated.js`](./bundle.deobfuscated.js)
+(12.0 MB, 230 095 lines; verified to parse with `node --check`).
 
-The remaining bundle files (`pageHook.js` 6.1 MB, `powerkits-core.js` 11.9 MB, `gitMode.js`,
-`payload.js`, `ota-update.js`, `hwFingerprint.js`, `drag-blocker.js`, `lovable-feature-api.js`)
-have not been cracked yet; the same pipeline applies to each:
+| file | obfuscated | decoded | role in the product |
+|---|---|---|---|
+| `background.js` | 3.6 MB | 4 313 lines | service worker: cookie harvest, session sync, licence gate, OTA, GitHub, BYOK |
+| `content.js` | 2.4 MB | 1 263 lines | bridge / state / autologin (see `content.annotated.js`) |
+| `drag-blocker.js` | 231 KB | 146 lines | MAIN-world UI guard (`ql-drag-overlay`, `data-ql-native-chat-active`) |
+| `gitMode.js` | 3.5 MB | 1 670 lines | the `git_mode` send path: auto-commit, apply changes, BYOK generation |
+| `hwFingerprint.js` | 270 KB | 143 lines | `QLFingerprint` from fonts + `WEBGL_debug_renderer_info`, for licence device-binding |
+| `lovable-feature-api.js` | 94 KB | 97 lines | shared `pk*` feature request helpers |
+| `ota-update.js` | 769 KB | 270 lines | downloads new code from `ai.127hub.com/api/update/download` |
+| `pageHook.js` | 6.1 MB | 3 827 lines | MAIN-world Lovable page hook: intercepts send/chat, rewrites the credits DOM, modal |
+| `payload.js` | 2.0 MB | 1 004 lines | licence/login shell UI ("Activate License") |
+| `powerkits-core.js` | 11.9 MB | ~217 000 lines | product UI bundle + vendored JSZip — **only partially deobfuscated** |
+
+### 8.1 Where the licence gate actually lives
+
+This matters for anyone tempted to "just patch the key check":
+
+* **`payload.js`** owns the activation UI — `"Activate License"`, `"Enter your license key."`,
+  `"Invalid license key."`, `"Activation failed. Please try again."`, `APP_SHOW_LOGIN_SHELL`.
+* **`content.js`** only *displays* validity (`ql_license_key.trim().length >= 8` &&
+  `ql_license_valid !== false` && `ql_license_status !== "revoked"` — see §4.2). Editing that
+  changes a badge, nothing else.
+* **`background.js`** is where it is enforced: `refreshGateStatus()` plus the `heartbeat` /
+  `forceHeartbeat` actions, validated against `https://keygen.eklas.dev/api/license`, bound to
+  the machine by `hwFingerprint.js`.
+* **`ota-update.js`** renders the locked launcher (`ql-upd-locked`) and can replace the entire
+  client from `ai.127hub.com/api/update/download`.
+
+So the licence is **server-side**. Credits, the chat proxy, account switching and git mode all
+depend on `ai.127hub.com` accepting the key and on the heartbeat staying green; the client-side
+value is a display cache. A local edit cannot make the product work — it can only make the UI
+lie, after which every real request still fails server-side (and an OTA update would overwrite the
+edit anyway). **No licence-bypass patch is included in this folder, by design.**
+
+### 8.2 How `powerkits-core.js` was handled
+
+12 MB in 16 top-level statements is beyond what webcrack finishes in one pass (it exceeded a
+10-minute wall clock), so it was statement-split with `@babel/parser`: the leading decoder
+"prologue" (~429 KB: string array + `_0x` wrappers) was extracted and re-prepended to six chunks
+of ≤5.5 MB, each chunk was deobfuscated separately, and the duplicated prologues were stripped on
+reassembly (verified by exact-prefix comparison; chunk 05 is kept whole because webcrack rendered
+its prologue copy differently).
+
+Result quality is **lower than for the other files**: this bundle resolves strings through
+*dynamically computed* indices (e.g. `_0x334a5[_0x353907._0x5b84e3]`), which webcrack cannot
+resolve statically, so many literals stay indirect. Control flow and structure are readable; many
+strings are not. A large part of the decoded text is also vendored **JSZip**
+(`DataLengthProbe`, `Utf8EncodeWorker`, `OffsetEndOfZip64`, …).
 
 ```bash
+# reproduce for any single file
 unzip 127HUB-AI-V30.0.zip <file>.js
 bun add -d webcrack && bunx webcrack <file>.js -o out/
 ```
+
+## 9. Files in this folder
+
+| file | what it is |
+|---|---|
+| **`content.annotated.js`** | **the hand-annotated deliverable** — complete `content.js`, every identifier renamed, every section commented, with an appendix of the full message protocol. Verified to parse and to contain the identical set of 429 string literals as the machine deobfuscation. |
+| **`bundle.deobfuscated.js`** | **the combined deliverable** — all ten obfuscated scripts from the zip, decoded, concatentated in zip order with per-file banners (12.0 MB, 230 095 lines). A reading artifact, not a runnable program. |
+| `content.webcrack.js` | raw webcrack output for `content.js` (1 263 lines) — the machine baseline `content.annotated.js` was derived from and verified against. |
+| `background.webcrack.js` | raw webcrack output for `background.js` (4 313 lines) — the source of §6 above. |
+| `ANALYSIS.md` | this report. |
