@@ -3,8 +3,7 @@ import "./player.css";
 
 const SEEK_STEP = 10;
 const HIDE_CONTROLS_DELAY = 2800;
-const SWIPE_THRESHOLD = 15;
-const VB_SENSITIVITY = 0.005;
+const SWIPE_THRESHOLD = 16;
 const SPEEDS = [0.5, 1, 1.5, 2];
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
@@ -33,7 +32,13 @@ const Icon = {
     <path d="M19 7h-8v6h8V7zm2-4H3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H3V5h18v14z" />
   ),
   fullscreen: (
-    <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    <path
+      d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    />
   ),
   settings: (
     <path
@@ -49,10 +54,10 @@ export interface PlayerProps {
   src: string;
   poster?: string;
   title: string;
-  hostLabel?: string;
+  chip?: string;
 }
 
-export default function Player({ src, poster, title, hostLabel = "faphouse2.com" }: PlayerProps) {
+export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const previewRef = useRef<HTMLVideoElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -67,23 +72,17 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [speed, setSpeed] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [showUI, setShowUI] = useState(false);
+  const [showUI, setShowUI] = useState(true);
   const [isFs, setIsFs] = useState(false);
 
   // scrub preview
-  const [scrub, setScrub] = useState<{ show: boolean; pct: number; t: number }>({
-    show: false,
-    pct: 0,
-    t: 0,
-  });
+  const [scrub, setScrub] = useState<{ show: boolean; pct: number; t: number }>({ show: false, pct: 0, t: 0 });
   const dragging = useRef(false);
   const wasPlayingBeforeDrag = useRef(false);
 
   // gesture feedback
   const [seekPulse, setSeekPulse] = useState<{ side: "left" | "right"; key: number } | null>(null);
-  const [dragSeek, setDragSeek] = useState<string | null>(null);
-  const [vb, setVb] = useState<{ side: "left" | "right"; value: number } | null>(null);
-  const brightness = useRef(1);
+  const [dragTime, setDragTime] = useState<number | null>(null);
 
   const hasStream = () => {
     const v = videoRef.current;
@@ -112,7 +111,10 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     setDuration(0);
     setPlaying(false);
     setWaiting(false);
-    setShowUI(false);
+    setShowUI(true);
+    setDragTime(null);
+    setMenuOpen(false);
+    setScrub({ show: false, pct: 0, t: 0 });
   }, [src]);
 
   // ── video element events ──
@@ -135,6 +137,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     const onWaiting = () => setWaiting(true);
     const onPlaying = () => setWaiting(false);
     const onCanPlay = () => setWaiting(false);
+    const onVolume = () => setMuted(v.muted);
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
@@ -144,6 +147,8 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     v.addEventListener("waiting", onWaiting);
     v.addEventListener("playing", onPlaying);
     v.addEventListener("canplay", onCanPlay);
+    v.addEventListener("volumechange", onVolume);
+    void v.play().catch(() => {});
     return () => {
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
@@ -154,6 +159,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
       v.removeEventListener("waiting", onWaiting);
       v.removeEventListener("playing", onPlaying);
       v.removeEventListener("canplay", onCanPlay);
+      v.removeEventListener("volumechange", onVolume);
     };
   }, [revealUI, src]);
 
@@ -175,11 +181,14 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     [revealUI],
   );
 
+  /** Single volume button: mute / unmute (no slider, no swipe). */
   const toggleMute = () => {
     const v = videoRef.current;
     if (!v) return;
     v.muted = !v.muted;
+    if (!v.muted && v.volume === 0) v.volume = 1;
     setMuted(v.muted);
+    revealUI();
   };
 
   const enterPip = async () => {
@@ -200,7 +209,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
       if (document.fullscreenElement) await document.exitFullscreen();
       else await stage.requestFullscreen();
     } catch {
-      /* fallback handled via fullscreenchange / class */
+      /* fallback handled via fullscreenchange */
     }
   };
 
@@ -219,7 +228,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
   const showScrubPreview = (pct: number, t: number) => {
     setScrub({ show: true, pct, t });
     const pv = previewRef.current;
-    if (pv && pv.src === videoRef.current?.src) {
+    if (pv) {
       try {
         pv.currentTime = t;
       } catch {
@@ -239,6 +248,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     const t = pct * (v.duration || 0);
     v.currentTime = t;
     setCurrentTime(t);
+    setDragTime(t);
     showScrubPreview(pct, t);
     revealUI();
   };
@@ -252,6 +262,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     if (dragging.current) {
       v.currentTime = t;
       setCurrentTime(t);
+      setDragTime(t);
     }
   };
 
@@ -264,6 +275,7 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
       /* noop */
     }
     setScrub((s) => ({ ...s, show: false }));
+    setDragTime(null);
     const v = videoRef.current;
     if (v && wasPlayingBeforeDrag.current) void v.play().catch(() => {});
     revealUI();
@@ -273,98 +285,47 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
     if (!dragging.current) setScrub((s) => ({ ...s, show: false }));
   };
 
-  // ── touch gestures (ported from ui.html) ──
-  const touch = useRef<{
-    startX: number;
-    startY: number;
-    time: number;
-    tracking: "left" | "right" | "seek" | null;
-    initialTime: number;
-    initialVb: number;
-  } | null>(null);
+  // ── touch: tap toggles the chrome, double-tap seeks ±10s.
+  //    Deliberately NO swipe gestures: a horizontal drag over the video is
+  //    claimed by the OS/browser (swipe-back), which is what made the page
+  //    jump away, and the old brightness/volume swipe handled vertical drags.
+  const touch = useRef<{ x: number; y: number; time: number } | null>(null);
   const lastTap = useRef<{ t: number; x: number }>({ t: 0, x: 0 });
 
   const onTouchStart = (e: React.TouchEvent) => {
-    const v = videoRef.current;
-    if (!v || !hasStream()) return;
-    if ((e.target as HTMLElement).closest("button, .progress, .menu")) return;
-    const t = e.touches[0];
-    touch.current = {
-      startX: t.clientX,
-      startY: t.clientY,
-      time: Date.now(),
-      tracking: null,
-      initialTime: v.currentTime,
-      initialVb: t.clientX < window.innerWidth / 2 ? brightness.current : v.volume,
-    };
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    const st = touch.current;
-    const v = videoRef.current;
-    if (!st || !v) return;
-    const t = e.touches[0];
-    const dx = t.clientX - st.startX;
-    const dy = t.clientY - st.startY;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    if (!st.tracking) {
-      if (Math.max(absDx, absDy) < SWIPE_THRESHOLD) return;
-      if (absDy > absDx * 1.5) {
-        st.tracking = st.startX < window.innerWidth / 2 ? "left" : "right";
-      } else if (absDx > absDy * 1.2) {
-        st.tracking = "seek";
-      } else return;
+    if (e.touches.length !== 1) {
+      touch.current = null;
+      return;
     }
-    if (st.tracking === "left" || st.tracking === "right") {
-      const next = clamp(st.initialVb - dy * VB_SENSITIVITY, 0, 1);
-      if (st.tracking === "left") {
-        brightness.current = 0.3 + next * 0.7;
-        v.style.filter = `brightness(${brightness.current})`;
-      } else {
-        v.volume = next;
-        v.muted = false;
-        setMuted(false);
-      }
-      setVb({ side: st.tracking, value: next });
-    } else if (st.tracking === "seek") {
-      const swipeSeconds = (dx / window.innerWidth) * 180;
-      const t2 = clamp(st.initialTime + swipeSeconds, 0, v.duration || 0);
-      v.currentTime = t2;
-      setCurrentTime(t2);
-      setDragSeek(`${formatTime(t2)} / ${formatTime(v.duration || 0)}`);
-    }
+    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu")) return;
+    const t = e.touches[0];
+    touch.current = { x: t.clientX, y: t.clientY, time: Date.now() };
   };
 
   const onTouchEnd = (e: React.TouchEvent) => {
     const st = touch.current;
-    if (!st) return;
-    const dt = Date.now() - st.time;
-    const moved = st.tracking !== null;
-    if (st.tracking === "seek") setDragSeek(null);
-    const fadeVb = () => window.setTimeout(() => setVb(null), 500);
-    if (moved) fadeVb();
-    else if (dt < 300) {
-      const x = e.changedTouches[0].clientX;
-      const w = window.innerWidth;
-      // double-tap seek
-      if (lastTap.current.t && Date.now() - lastTap.current.t < 280 && Math.abs(x - lastTap.current.x) < 60) {
-        if (x < w * 0.5) seekBy(-SEEK_STEP);
-        else seekBy(SEEK_STEP);
-        lastTap.current = { t: 0, x: 0 };
-      } else {
-        lastTap.current = { t: Date.now(), x };
-        // single tap: toggle controls
-        setShowUI((s) => !s);
-        scheduleHide();
-      }
-    }
     touch.current = null;
+    if (!st) return;
+    const t = e.changedTouches[0];
+    // anything that moved was a page scroll, not a tap on the video
+    if (Math.abs(t.clientX - st.x) > SWIPE_THRESHOLD || Math.abs(t.clientY - st.y) > SWIPE_THRESHOLD) return;
+    if (Date.now() - st.time > 350) return;
+    const x = t.clientX;
+    const w = window.innerWidth;
+    if (lastTap.current.t && Date.now() - lastTap.current.t < 280 && Math.abs(x - lastTap.current.x) < 60) {
+      lastTap.current = { t: 0, x: 0 };
+      if (hasStream()) seekBy(x < w * 0.5 ? -SEEK_STEP : SEEK_STEP);
+      return;
+    }
+    lastTap.current = { t: Date.now(), x };
+    setShowUI((s) => !s);
+    scheduleHide();
   };
 
-  const onStageClick = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest("button, .progress, .menu")) return;
-    if (!hasStream()) return;
+  // mouse / pen only: tapping the surface plays or pauses
+  const onStagePointerUp = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, input")) return;
     revealUI();
     togglePlay();
   };
@@ -372,167 +333,186 @@ export default function Player({ src, poster, title, hostLabel = "faphouse2.com"
   const dur = duration || 0;
   const playedPct = dur > 0 ? (currentTime / dur) * 100 : 0;
   const loadedPct = dur > 0 ? clamp((bufferedEnd / dur) * 100, 0, 100) : 0;
+  const controlsHidden = !showUI && playing;
 
   return (
     <div
       ref={stageRef}
-      className={`player-stage${isFs ? " web-fs" : ""}`}
-      onClick={onStageClick}
+      className={`player-stage${isFs ? " web-fs" : ""}${showUI ? " player-stage--ui" : ""}${controlsHidden ? " player-stage--hidden" : ""}`}
+      onPointerUp={onStagePointerUp}
+      onMouseMove={revealUI}
       onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
       <video
         ref={videoRef}
-        className="main-video"
+        className="x-player__video"
         src={src}
         poster={poster}
         playsInline
         preload="metadata"
+        autoPlay
         muted={muted}
         loop
+        title={title}
       />
 
-      {/* hidden scrub-preview video (seeks the same mp4) */}
-      <div className={`scrub-preview${scrub.show ? " show" : ""}`} style={{ left: `${scrub.pct * 100}%` }}>
-        <div className="scrub-preview-box">
-          <video ref={previewRef} src={src} muted playsInline preload="metadata" />
-        </div>
-        <div className="scrub-line" />
-        <div className="time-display" style={{ marginTop: 4, padding: 0 }}>
-          {formatTime(scrub.t)}
-        </div>
-      </div>
-
       {waiting && (
-        <div className="spinner-wrap show">
-          <div className="spinner" />
+        <div className="x-spinner-wrap show">
+          <div className="x-spinner" />
         </div>
       )}
 
-      {/* glass center play (visible when paused) */}
-      <button
-        className={`center-play${playing ? " hidden-play" : " visible"}`}
-        aria-label="Play"
-        onClick={(e) => {
-          e.stopPropagation();
-          togglePlay();
-        }}
-      >
-        <svg viewBox="0 0 24 24">{Icon.play}</svg>
-      </button>
-
-      {/* gesture feedback */}
       {seekPulse && (
-        <div key={seekPulse.key} className={`seek-feedback ${seekPulse.side} show`}>
+        <div key={seekPulse.key} className={`x-pulse ${seekPulse.side}`}>
           {seekPulse.side === "left" ? (
             <>
               <svg viewBox="0 0 24 24">{Icon.rewind}</svg>
-              <span>10s</span>
+              <span>{SEEK_STEP}s</span>
             </>
           ) : (
             <>
-              <span>10s</span>
+              <span>{SEEK_STEP}s</span>
               <svg viewBox="0 0 24 24">{Icon.forward}</svg>
             </>
           )}
         </div>
       )}
-      {dragSeek && <div className="drag-seek-overlay show">{dragSeek}</div>}
-      {vb && (
-        <div className={`vb-overlay ${vb.side} show`}>
-          <div className="vb-icon">
-            <svg viewBox="0 0 24 24">{vb.side === "right" ? Icon.volume : Icon.settings}</svg>
-          </div>
-          <div className="vb-bar-container">
-            <div className="vb-fill" style={{ height: `${vb.value * 100}%` }} />
-          </div>
+
+      {dragTime !== null && (
+        <div className="x-drag-time show">
+          <span>{formatTime(dragTime)}</span>
+          <span className="sep">/</span>
+          <span className="rest">{formatTime(dur)}</span>
         </div>
       )}
 
-      {/* control overlays */}
-      <div className={`player-ui${showUI ? " show" : ""}`}>
-        <div className="ui-top">
-          <div className="ui-title" title={title}>
-            {title}
-            <small>PREVIEW · FULL ON {hostLabel.toUpperCase()}</small>
-          </div>
-          <div className="ui-top-right">
-            <div className="menu-wrapper">
-              <button
-                className="ui-icon-btn"
-                aria-label="Settings"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((m) => !m);
-                }}
-              >
-                <svg viewBox="0 0 24 24">{Icon.settings}</svg>
-              </button>
-              <div className={`menu${menuOpen ? " show" : ""}`} onClick={(e) => e.stopPropagation()}>
-                <div className="menu-section">Playback Speed</div>
-                {SPEEDS.map((s) => (
-                  <div
-                    key={s}
-                    className={`menu-item${speed === s ? " active" : ""}`}
-                    onClick={() => {
-                      const v = videoRef.current;
-                      if (v) v.playbackRate = s;
-                      setSpeed(s);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    {s === 1 ? "Normal" : `${s}x`}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <button className="ui-icon-btn" aria-label="Fullscreen" onClick={(e) => { e.stopPropagation(); void toggleFullscreen(); }}>
-              <svg viewBox="0 0 24 24">{Icon.fullscreen}</svg>
-            </button>
-          </div>
+      {/* top control row */}
+      <div className="x-top">
+        <div className="x-top__side">
+          <button
+            className="x-btn"
+            aria-label={playing ? "Pause" : "Play"}
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePlay();
+            }}
+          >
+            <svg viewBox="0 0 24 24">{playing ? Icon.pause : Icon.play}</svg>
+          </button>
+          <button
+            className="x-btn"
+            aria-label={muted ? "Unmute" : "Mute"}
+            aria-pressed={!muted}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMute();
+            }}
+          >
+            <svg viewBox="0 0 24 24">{muted ? Icon.muted : Icon.volume}</svg>
+          </button>
         </div>
 
-        <div className="ui-bottom">
-          <div
-            ref={progressRef}
-            className="progress"
-            onPointerDown={onProgressDown}
-            onPointerMove={onProgressMove}
-            onPointerUp={onProgressUp}
-            onPointerLeave={onProgressLeave}
+        <div className="x-top__spacer" />
+
+        <div className="x-top__side">
+          <button
+            className="x-btn"
+            aria-label={`Rewind ${SEEK_STEP} seconds`}
+            onClick={(e) => {
+              e.stopPropagation();
+              seekBy(-SEEK_STEP);
+            }}
           >
-            <div className="progress-track">
-              <div className="progress-loaded" style={{ width: `${loadedPct}%` }} />
-              <div className="progress-played" style={{ width: `${playedPct}%` }} />
-              <div className="progress-thumb" style={{ left: `${playedPct}%` }} />
+            <svg viewBox="0 0 24 24">{Icon.rewind}</svg>
+          </button>
+          <button
+            className="x-btn"
+            aria-label={`Forward ${SEEK_STEP} seconds`}
+            onClick={(e) => {
+              e.stopPropagation();
+              seekBy(SEEK_STEP);
+            }}
+          >
+            <svg viewBox="0 0 24 24">{Icon.forward}</svg>
+          </button>
+          <div className="x-menu-host">
+            <button
+              className="x-btn"
+              aria-label="Playback settings"
+              aria-expanded={menuOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((m) => !m);
+              }}
+            >
+              <svg viewBox="0 0 24 24">{Icon.settings}</svg>
+            </button>
+            <div className={`x-menu${menuOpen ? " show" : ""}`} onClick={(e) => e.stopPropagation()}>
+              <div className="x-menu__title">Playback speed</div>
+              {SPEEDS.map((s) => (
+                <button
+                  key={s}
+                  className={`x-menu__item${speed === s ? " on" : ""}`}
+                  onClick={() => {
+                    const v = videoRef.current;
+                    if (v) v.playbackRate = s;
+                    setSpeed(s);
+                    setMenuOpen(false);
+                  }}
+                >
+                  {s === 1 ? "Normal" : `${s}×`}
+                </button>
+              ))}
+              <button
+                className="x-menu__item"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void enterPip();
+                }}
+              >
+                Picture in picture
+              </button>
             </div>
           </div>
-          <div className="controls">
-            <button className="ctrl-btn" aria-label="Play/Pause" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
-              <svg viewBox="0 0 24 24">{playing ? Icon.pause : Icon.play}</svg>
-            </button>
-            <button className="ctrl-btn" aria-label="Rewind 10s" onClick={(e) => { e.stopPropagation(); seekBy(-SEEK_STEP); }}>
-              <svg viewBox="0 0 24 24">{Icon.rewind}</svg>
-            </button>
-            <button className="ctrl-btn" aria-label="Forward 10s" onClick={(e) => { e.stopPropagation(); seekBy(SEEK_STEP); }}>
-              <svg viewBox="0 0 24 24">{Icon.forward}</svg>
-            </button>
-            <div className="time-display">
-              <span>{formatTime(currentTime)}</span>
-              <span className="sep">/</span>
-              <span>{formatTime(duration)}</span>
-            </div>
-            <div className="ctrl-spacer" />
-            <button className="ctrl-btn" aria-label="Mute" onClick={(e) => { e.stopPropagation(); toggleMute(); }}>
-              <svg viewBox="0 0 24 24">{muted ? Icon.muted : Icon.volume}</svg>
-            </button>
-            <button className="ctrl-btn" aria-label="Picture in picture" onClick={(e) => { e.stopPropagation(); void enterPip(); }}>
-              <svg viewBox="0 0 24 24">{Icon.pip}</svg>
-            </button>
-          </div>
+          <button
+            className="x-btn"
+            aria-label="Fullscreen"
+            onClick={(e) => {
+              e.stopPropagation();
+              void toggleFullscreen();
+            }}
+          >
+            <svg viewBox="0 0 24 24">{Icon.fullscreen}</svg>
+          </button>
         </div>
       </div>
+
+      {/* timeline */}
+      <div className="x-timeline">
+        <div
+          ref={progressRef}
+          className="x-seeker"
+          onPointerDown={onProgressDown}
+          onPointerMove={onProgressMove}
+          onPointerUp={onProgressUp}
+          onPointerLeave={onProgressLeave}
+        >
+          <div className="x-seeker__track">
+            <div className="x-seeker__loaded" style={{ width: `${loadedPct}%` }} />
+            <div className="x-seeker__played" style={{ width: `${playedPct}%` }} />
+          </div>
+          <div className="x-seeker__thumb" style={{ left: `${playedPct}%` }} />
+          {scrub.show && (
+            <div className="x-preview show" style={{ left: `calc(${scrub.pct * 100}% - 120px)` }}>
+              <video ref={previewRef} src={src} muted playsInline preload="metadata" />
+              <div className="x-preview__time">{formatTime(scrub.t)}</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="x-chip">{chip}</div>
     </div>
   );
 }
