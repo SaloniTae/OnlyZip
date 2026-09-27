@@ -1,0 +1,12 @@
+{
+  "name": "obsf-work",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@babel/generator": "7",
+    "@babel/parser": "^7.29.9",
+    "@babel/traverse": "7",
+    "@babel/types": "7",
+    "webcrack": "^2.16.0"
+  }
+}
