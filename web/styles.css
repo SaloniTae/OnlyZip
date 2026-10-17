@@ -181,8 +181,9 @@ p {
 
 .main--watch {
   gap: 0;
-  /* the player tucks under the translucent bar, like beeg */
-  padding-top: 16px;
+  /* clear the fixed 48px app bar and leave a breathing gap above the player,
+     so the navbar no longer overlaps the player chrome */
+  padding-top: calc(var(--header-h) + 20px);
 }
 
 .container {
@@ -193,7 +194,8 @@ p {
 }
 
 @media (max-aspect-ratio: 1/1) {
-  .container { padding-left: 0; padding-right: 0; }
+  /* only the watch player bleeds to the edges in portrait; home/list keep a gutter */
+  .main--watch .container { padding-left: 0; padding-right: 0; }
 }
 
 @media (min-width: 600px) {
@@ -203,8 +205,8 @@ p {
 @media (min-width: 1280px) {
   .container {
     max-width: 2256px;
-    padding-left: 96px;
-    padding-right: 48px;
+    padding-left: 120px;
+    padding-right: 72px;
   }
 }
 
@@ -846,7 +848,7 @@ p {
 
 .watch__top {
   display: flex;
-  gap: 58px;
+  gap: 24px;
   align-items: flex-start;
 }
 
@@ -857,35 +859,41 @@ p {
   flex: 1 1 auto;
   min-width: 0;
   aspect-ratio: 16 / 9;
-  max-width: calc((100vh - 290px) * 1.7778);
+  max-width: calc((100vh - 300px) * 1.7778);
   background: var(--x-color-surface-5);
-  border-radius: 12px;
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 @supports (height: 100svh) {
-  .watch__stage { max-width: calc((100svh - 290px) * 1.7778); }
-  .watch__rail { max-height: calc(100svh - 290px); }
+  .watch__stage { max-width: calc((100svh - 300px) * 1.7778); }
+  .watch__rail { max-height: calc(100svh - 300px); }
 }
 
 .watch__rail {
-  flex: 0 0 314px;
-  width: 314px;
+  flex: 0 0 340px;
+  width: 340px;
   align-self: stretch;
-  max-height: calc(100vh - 290px);
+  max-height: calc(100vh - 300px);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
+  gap: 10px;
   align-content: start;
   overflow: hidden;
+  /* the rail is height-matched to the player in JS; fade the bottom edge so a
+     partially-visible last row reads as intentional rather than hard-clipped */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent);
 }
 
 .rail-item {
   position: relative;
   display: block;
-  aspect-ratio: 1/1;
-  border-radius: 12px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
   overflow: hidden;
   background: var(--x-color-overlay-5);
+  box-shadow: inset 0 0 0 1px var(--x-color-border-10);
 }
 
 .rail-item img {
@@ -898,24 +906,38 @@ p {
 
 .rail-item:hover img { opacity: 1; }
 
+.rail-item__preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
 .rail-item__status {
   position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 1;
-  padding: 2px 4px;
-  border-radius: 8px 0;
-  background: var(--x-color-status-green);
+  top: 6px;
+  left: 6px;
+  z-index: 2;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
   color: #fff;
   font-size: 10px;
-  line-height: 10px;
-  font-weight: 500;
+  line-height: 14px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
 }
 
 .rail-item__dur {
   position: absolute;
   right: 6px;
   bottom: 6px;
+  z-index: 2;
   font-family: var(--font-digits);
   font-size: 12px;
   line-height: 16px;
@@ -923,28 +945,47 @@ p {
   text-shadow: var(--text-shadow-1);
 }
 
-.watch__info { margin-top: 12px; }
+.watch__info { margin-top: 20px; }
+
+/* creator link on the left, action icons (save/open/copy/back) on the right,
+   sitting just below the player */
+.watch__meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* heading row sits ABOVE the player (title left, actions right) */
+.watch__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
 
 .watch__title-row {
   display: flex;
   align-items: center;
-  margin-bottom: -10px;
+  gap: 12px;
+  margin-bottom: 2px;
 }
 
 .watch__title {
   flex-grow: 1;
   min-width: 0;
-  font-size: 16px;
-  line-height: 24px;
-  letter-spacing: 0.5px;
+  font-size: 22px;
+  line-height: 30px;
+  letter-spacing: 0.2px;
+  font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 40px);
-  mask-image: linear-gradient(to left, transparent 0, #000 40px);
 }
 
-.watch__actions { display: flex; }
+.watch__actions { display: flex; flex-shrink: 0; gap: 4px; }
 
 .watch__creator {
   display: flex;
@@ -976,8 +1017,24 @@ p {
 
 .watch__train {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   margin-top: 12px;
+}
+
+/* horizontal "Up next" strip, set apart from the info column above it */
+.watch__strip {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--x-color-border-10);
+}
+
+.watch__strip-head {
+  margin: 0 0 4px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  color: var(--text);
 }
 
 .train-item {
@@ -999,6 +1056,16 @@ p {
 
 .train-item:hover img { opacity: 1; }
 
+.train-item__preview {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
 @media (max-width: 599.98px) {
   .train-item { width: 194px; }
 }
@@ -1007,13 +1074,20 @@ p {
   position: absolute;
   right: 6px;
   bottom: 6px;
+  z-index: 2;
   font-family: var(--font-digits);
   font-size: 12px;
   line-height: 16px;
   text-shadow: var(--text-shadow-1);
 }
 
-.watch__related { margin-top: 24px; }
+.watch__related {
+  margin-top: 28px;
+  padding: 20px;
+  border: 1px solid var(--x-color-border-10);
+  border-radius: 16px;
+  background: var(--x-color-surface-5);
+}
 
 .watch__related-head {
   margin: 0 0 16px;
@@ -1033,18 +1107,26 @@ p {
   .watch { gap: 0; }
 }
 
-/* beeg keeps the mobile info column at 14/20 behind a 12px gutter */
+/* mobile: player goes edge-to-edge, everything else sits behind a 14px gutter */
 @media (max-width: 599.98px) {
   .watch__title {
-    font-size: 14px;
-    line-height: 20px;
-    letter-spacing: 0.25px;
+    font-size: 18px;
+    line-height: 24px;
+    letter-spacing: 0.15px;
+    -webkit-line-clamp: 3;
   }
-  .watch__title,
+  .watch__head,
   .watch__creator,
   .watch__desc,
   .watch__buttons,
-  .watch__train { padding-left: 12px; padding-right: 12px; }
+  .watch__strip-head,
+  .watch__train { padding-left: 14px; padding-right: 14px; }
+  .watch__head { margin-bottom: 10px; }
+  .watch__related {
+    margin-left: 14px;
+    margin-right: 14px;
+    padding: 16px;
+  }
 }
 
 /* ── buttons ────────────────────────────────────────────────────────── */

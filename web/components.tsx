@@ -119,12 +119,30 @@ export function VideoCard({
   );
 }
 
+/** Hover after a short delay, but never on touch devices (matches beeg). */
+function useHoverPreview() {
+  const [hover, setHover] = useState(false);
+  const timer = useRef<number | null>(null);
+  const onEnter = () => {
+    if (window.matchMedia("(hover: none)").matches) return;
+    timer.current = window.setTimeout(() => setHover(true), 300);
+  };
+  const onLeave = () => {
+    if (timer.current) window.clearTimeout(timer.current);
+    setHover(false);
+  };
+  return { hover, onEnter, onLeave };
+}
+
 /** Square recommendation tile used by the watch-page rail (beeg "GreyFox"). */
 export function RailTile({ v, onSelect }: { v: Video; onSelect: (v: Video) => void }) {
+  const { hover, onEnter, onLeave } = useHoverPreview();
   return (
     <a
       className="rail-item"
       href={`#v/${v.id}`}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
       onClick={(e) => {
         e.preventDefault();
         onSelect(v);
@@ -132,6 +150,7 @@ export function RailTile({ v, onSelect }: { v: Video; onSelect: (v: Video) => vo
       title={v.title}
     >
       {v.thumb ? <img src={v.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" /> : null}
+      {hover && v.preview && <video className="rail-item__preview" src={v.preview} autoPlay muted loop playsInline />}
       {v.quality && <span className="rail-item__status">{v.quality}</span>}
       {v.duration && <span className="rail-item__dur">{v.duration}</span>}
     </a>
@@ -140,10 +159,13 @@ export function RailTile({ v, onSelect }: { v: Video; onSelect: (v: Video) => vo
 
 /** Wide 96px-tall tile used by the watch-page "train". */
 export function TrainTile({ v, onSelect }: { v: Video; onSelect: (v: Video) => void }) {
+  const { hover, onEnter, onLeave } = useHoverPreview();
   return (
     <a
       className="train-item"
       href={`#v/${v.id}`}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
       onClick={(e) => {
         e.preventDefault();
         onSelect(v);
@@ -151,6 +173,7 @@ export function TrainTile({ v, onSelect }: { v: Video; onSelect: (v: Video) => v
       title={v.title}
     >
       {v.thumb ? <img src={v.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" /> : null}
+      {hover && v.preview && <video className="train-item__preview" src={v.preview} autoPlay muted loop playsInline />}
       {v.duration && <span className="train-item__dur">{v.duration}</span>}
     </a>
   );
