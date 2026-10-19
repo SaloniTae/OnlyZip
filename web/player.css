@@ -11,6 +11,7 @@
   background: rgb(var(--x-color-background-rgb));
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
   /* pan-y keeps vertical page scrolling, pinch-zoom stays available, double-tap
      zoom is off and horizontal drags are not claimed by the browser (which used
      to fire swipe-to-go-back while dragging over the video). */

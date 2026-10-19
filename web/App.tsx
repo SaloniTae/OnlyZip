@@ -1,6 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { fetchVideos, resolveVideo, type Listing, type ListName, type Orientation, type Video } from "./api";
-import { CardSkeletons, EmptyState, ErrorBox, VideoCard } from "./components";
+import {
+  fetchCategories,
+  fetchCreators,
+  fetchVideos,
+  resolveVideo,
+  type Category,
+  type Creator,
+  type Listing,
+  type ListName,
+  type Orientation,
+  type ProfileRef,
+  type RelatedSearch,
+  type Sort,
+  type Uploader,
+  type Video,
+} from "./api";
+import {
+  CardSkeletons,
+  CreatorLine,
+  CreatorTile,
+  EmptyState,
+  ErrorBox,
+  RailHead,
+  VideoCard,
+} from "./components";
+import CreatorPage from "./Creator";
 import Watch from "./Watch";
 import { clearHistory, loadHistory, loadSaved, onStoreChange, relativeDay } from "./store";
 
@@ -18,16 +42,38 @@ const TAGS = [
   "Ebony", "Asian", "Squirt", "Threesome", "Cosplay", "Massage", "Step Mom", "Amateur",
 ];
 
+// faphouse2's own search sorting (its search sidebar: Relevant / Newest / Trending)
+const SORTS: [Sort, string][] = [
+  ["relevance", "Relevant"],
+  ["new", "Newest"],
+  ["popular", "Trending"],
+];
+
 // ── routing ──
 
-type Route = { view: "browse" } | { view: "saved" } | { view: "history" } | { view: "watch"; id: string };
+type Route =
+  | { view: "browse" }
+  | { view: "saved" }
+  | { view: "history" }
+  | { view: "watch"; id: string }
+  | { view: "creator"; slug: string; kind: "creator" | "pornstar" | "studio" };
 
 function parseHash(): Route {
   const h = window.location.hash;
   if (h.startsWith("#v/")) return { view: "watch", id: decodeURIComponent(h.slice(3)) };
+  if (h.startsWith("#studio/")) return { view: "creator", slug: decodeURIComponent(h.slice(8)), kind: "studio" };
+  if (h.startsWith("#studio")) return { view: "creator", slug: "", kind: "studio" };
+  if (h.startsWith("#creator/")) return { view: "creator", slug: decodeURIComponent(h.slice(9)), kind: "creator" };
+  if (h.startsWith("#pornstar/")) return { view: "creator", slug: decodeURIComponent(h.slice(10)), kind: "pornstar" };
   if (h.startsWith("#saved")) return { view: "saved" };
   if (h.startsWith("#history")) return { view: "history" };
   return { view: "browse" };
+}
+
+/** Hash for any profile we can open (creator, pornstar or studio). */
+function profileHash(p: { kind: ProfileRef["kind"]; slug: string }): string {
+  const prefix = p.kind === "studio" ? "studio" : p.kind === "pornstar" ? "pornstar" : "creator";
+  return `${prefix}/${encodeURIComponent(p.slug)}`;
 }
 
 // ── icons ──
@@ -131,12 +177,23 @@ export default function App() {
   const [list, setList] = useState<ListName>("all");
   const [vr, setVr] = useState(false);
   const [quality, setQuality] = useState<string | null>(null);
+  const [ultra, setUltra] = useState(false);
+  const [category, setCategory] = useState<Category | null>(null);
+  const [sort, setSort] = useState<Sort>("relevance");
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [topCreators, setTopCreators] = useState<Creator[]>([]);
+  const [creatorHits, setCreatorHits] = useState<Creator[]>([]);
+  const [resultCreators, setResultCreators] = useState<Creator[]>([]);
+  const [relatedSearches, setRelatedSearches] = useState<RelatedSearch[]>([]);
 
   const [videos, setVideos] = useState<Video[]>([]);
   const [total, setTotal] = useState<number | undefined>(undefined);
   const [page, setPage] = useState(1);
   const [listLoading, setListLoading] = useState(true);
   const [moreLoading, setMoreLoading] = useState(false);
+  const [listDone, setListDone] = useState(false);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const seenIds = useRef<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState(loadHistory);
   const [saved, setSaved] = useState(loadSaved);
@@ -150,6 +207,18 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  // deep link: /#search opens the search panel directly
+  useEffect(() => {
+    if (window.location.hash === "#search") setSearchOpen(true);
+  }, []);
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    if (window.location.hash === "#search") {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  };
 
   useEffect(() => onStoreChange(() => {
     setHistory(loadHistory());
@@ -169,6 +238,7 @@ export default function App() {
       else {
         setListLoading(true);
         setError(null);
+        setMoreError(null);
       }
       try {
         const data: Listing = await fetchVideos({
@@ -177,32 +247,95 @@ export default function App() {
           list,
           orientation,
           vr,
+          ultra,
+          category: category?.slug,
+          sort: query ? sort : undefined,
           page: nextPage,
         });
         const incoming = data.videos ?? [];
         setTotal(data.total);
-        setVideos((prev) => {
-          if (!append) return incoming;
-          const seen = new Set(prev.map((v) => v.id));
-          return [...prev, ...incoming.filter((v) => !seen.has(v.id))];
-        });
+        if (!append && query) setRelatedSearches(data.relatedSearches ?? []);
+        // the upstream publishes no total, so the end of the list is the first
+        // page that brings nothing new
+        const fresh = append ? incoming.filter((v) => !seenIds.current.has(v.id)) : incoming;
+        if (!append) seenIds.current = new Set(fresh.map((v) => v.id));
+        else for (const v of fresh) seenIds.current.add(v.id);
+        // upstream answers 404 past the last page — that ends the grid instead
+        // of raising an error, so infinite scroll stops on "no more videos"
+        setListDone(!!data.end || fresh.length === 0);
+        setVideos((prev) => (append ? [...prev, ...fresh] : fresh));
+        setMoreError(null);
         setPage(nextPage);
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-        if (!append) setVideos([]);
+        const message = err instanceof Error ? err.message : String(err);
+        // a failure while appending keeps the grid that is already on screen
+        if (append) setMoreError(message);
+        else {
+          setError(message);
+          setVideos([]);
+        }
       } finally {
         setListLoading(false);
         setMoreLoading(false);
       }
     },
-    [query, list, orientation, vr],
+    [query, list, orientation, vr, ultra, category, sort],
   );
+
+  // live upstream directory: categories power the filter bar, /models the creator rail
+  useEffect(() => {
+    let alive = true;
+    fetchCategories()
+      .then((r) => alive && setCategories(r.categories))
+      .catch(() => {});
+    fetchCreators("", 1)
+      .then((r) => alive && setTopCreators(r.creators.slice(0, 24)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // creators matching what is being typed in the search field
+  useEffect(() => {
+    const text = searchText.trim();
+    if (!searchOpen || text.length < 2) {
+      setCreatorHits([]);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      fetchCreators(text, 1)
+        .then((r) => alive && setCreatorHits(r.creators.slice(0, 6)))
+        .catch(() => alive && setCreatorHits([]));
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [searchOpen, searchText]);
+
+  // creators matching a committed search, shown above the video results
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResultCreators([]);
+      return;
+    }
+    let alive = true;
+    fetchCreators(q, 1)
+      .then((r) => alive && setResultCreators(r.creators.slice(0, 12)))
+      .catch(() => alive && setResultCreators([]));
+    return () => {
+      alive = false;
+    };
+  }, [query]);
 
   useEffect(() => {
     if (route.view === "browse") void loadPage(1, false);
   }, [loadPage, route.view]);
 
-  const hasMore = !listLoading && videos.length > 0 && (total === undefined || videos.length < total);
+  const hasMore = !listLoading && !listDone && !moreError && videos.length > 0;
 
   useEffect(() => {
     const el = sentinel.current;
@@ -249,7 +382,12 @@ export default function App() {
     setSearchText(t);
     setQuery(t);
     setQuality(null);
+    setSort("relevance");
     setSearchOpen(false);
+    // the search panel is a hash overlay — leave it so the URL stays shareable
+    if (window.location.hash === "#search") {
+      window.history.replaceState(null, "", window.location.pathname);
+    }
     window.scrollTo({ top: 0 });
   };
 
@@ -264,11 +402,35 @@ export default function App() {
     [videos, quality],
   );
 
+  // the uploaders (channels/studios) we actually saw in this listing, each with
+  // their real profile avatar — never a video frame
   const channels = useMemo(() => {
-    const map = new Map<string, Video>();
-    for (const v of videos) if (v.channel && !map.has(v.channel)) map.set(v.channel, v);
-    return [...map.entries()].map(([name, v]) => ({ name, v })).slice(0, 40);
+    const map = new Map<string, Uploader>();
+    for (const v of videos) {
+      const u = v.uploader;
+      if (!u?.slug || !u.avatar) continue;
+      const key = `${u.kind}/${u.slug}`;
+      if (!map.has(key)) map.set(key, u);
+    }
+    return [...map.values()].slice(0, 28);
   }, [videos]);
+
+  /** One home rail: directory creators first, then the channels seen in the grid. */
+  const railCreators = useMemo(() => {
+    const out: Creator[] = [];
+    const seen = new Set<string>();
+    for (const c of topCreators) {
+      if (!c.slug || seen.has(`${c.kind}/${c.slug}`)) continue;
+      seen.add(`${c.kind}/${c.slug}`);
+      out.push(c);
+    }
+    for (const u of channels) {
+      if (seen.has(`${u.kind}/${u.slug}`)) continue;
+      seen.add(`${u.kind}/${u.slug}`);
+      out.push({ kind: u.kind, slug: u.slug, name: u.name || u.slug, avatar: u.avatar, url: u.url || "" });
+    }
+    return out.slice(0, 30);
+  }, [topCreators, channels]);
 
   const qualities = useMemo(() => {
     const map = new Map<string, Video>();
@@ -276,19 +438,50 @@ export default function App() {
     return [...map.keys()].slice(0, 8);
   }, [videos]);
 
+  const openCreator = useCallback((c: ProfileRef | Creator | Uploader) => {
+    const kind = (c as ProfileRef).kind === "studio" ? "studio" : (c as ProfileRef).kind === "pornstar" ? "pornstar" : "creator";
+    window.location.hash = profileHash({ kind, slug: c.slug });
+    setRoute({ view: "creator", slug: c.slug, kind });
+    setCreatorHits([]);
+    setSearchOpen(false);
+    setDrawerOpen(false);
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  /** Category chips on the watch page land back on the filtered browse grid. */
+  const openCategory = useCallback((c: Category) => {
+    setCategory(c);
+    setUltra(false);
+    setQuery("");
+    setSearchText("");
+    setQuality(null);
+    setDrawerOpen(false);
+    window.location.hash = "";
+    setRoute({ view: "browse" });
+    window.scrollTo({ top: 0 });
+  }, []);
+
   const heading = query
     ? `Results for “${query}”`
-    : quality
-      ? `${quality} videos`
-      : list === "new"
-        ? "Newest videos"
-        : orientation === "gay"
-          ? "Gay videos"
-          : orientation === "transgender"
-            ? "Transgender videos"
+    : category
+      ? `${category.name} videos`
+      : ultra
+        ? "Ultra videos"
+        : quality
+          ? `${quality} videos`
+          : list === "new"
+            ? "Newest videos"
             : vr
-              ? "VR videos"
-              : "Featured videos";
+              ? orientation === "gay"
+                ? "Gay VR videos"
+                : orientation === "transgender"
+                  ? "Transgender VR videos"
+                  : "VR videos"
+              : orientation === "gay"
+                ? "Gay videos"
+                : orientation === "transgender"
+                  ? "Transgender videos"
+                  : "Featured videos";
 
   const savedVideos: Video[] = saved.map((s) => ({
     id: s.id,
@@ -296,6 +489,7 @@ export default function App() {
     url: s.url,
     thumb: s.thumb,
     channel: s.channel,
+    uploader: s.uploader,
   }));
 
   const historyVideos: Video[] = history.map((h) => ({
@@ -304,6 +498,7 @@ export default function App() {
     url: h.url,
     thumb: h.thumb,
     channel: h.channel,
+    uploader: h.uploader,
   }));
 
   const goHome = () => {
@@ -326,11 +521,13 @@ export default function App() {
     <aside className={`sidebar${drawerOpen ? " sidebar--open" : ""}`} aria-label="Main navigation">
       <div className="sidebar__body">
         <div className="sidebar__group">
-          {navItem(route.view === "browse" && !query && !vr, I.home, "Home", () => resetListing(() => {
+          {navItem(route.view === "browse" && !query && !vr && !ultra && !category, I.home, "Home", () => resetListing(() => {
             setQuery("");
             setSearchText("");
             setQuality(null);
             setVr(false);
+            setUltra(false);
+            setCategory(null);
             setList("all");
             goHome();
           }))}
@@ -422,14 +619,14 @@ export default function App() {
 
   const searchLayer = searchOpen ? (
     <>
-      <div className="search-layer" onClick={() => setSearchOpen(false)} />
+      <div className="search-layer" onClick={closeSearch} />
       <div className="search-panel">
         <div className="search-row">
           <input
             className="search-input"
             type="search"
             autoFocus
-            placeholder="Search videos, channels — or paste a video URL"
+            placeholder="Search videos, creators — or paste a video URL"
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             onKeyDown={(e) => {
@@ -437,11 +634,40 @@ export default function App() {
               if (e.key === "Escape") setSearchOpen(false);
             }}
           />
-          <button className="icon-btn" aria-label="Close search" onClick={() => setSearchOpen(false)}>
+          <button className="icon-btn" aria-label="Close search" onClick={closeSearch}>
             {I.close}
           </button>
         </div>
-        <div className="search-hint">Try “anal”, “pov”, “milf” — or paste a faphouse2.com video link.</div>
+
+        {searchText.trim().length >= 2 ? (
+          <div className="search-suggest">
+            <button className="search-suggest__all" onClick={() => doSearch(searchText)}>
+              <span className="search-suggest__icon">{I.search}</span>
+              Search videos for “{searchText.trim()}”
+            </button>
+            {creatorHits.length > 0 ? (
+              <>
+                <div className="search-suggest__label">Creators</div>
+                {creatorHits.map((c) => (
+                  <CreatorLine
+                    key={`${c.kind}/${c.slug}`}
+                    c={c}
+                    onSelect={(picked) => {
+                      setSearchOpen(false);
+                      openCreator(picked);
+                    }}
+                  />
+                ))}
+              </>
+            ) : (
+              <div className="search-suggest__empty">No creators match — press Enter for videos.</div>
+            )}
+          </div>
+        ) : (
+          <div className="search-hint">
+            Try “anal”, “pov”, “mia” — or paste a faphouse2.com video link.
+          </div>
+        )}
       </div>
     </>
   ) : null;
@@ -495,15 +721,43 @@ export default function App() {
       <>
         {ageGate}
         {appBar}
+        {searchLayer}
         {/* constant top padding — toggling it on scroll shifted the whole page */}
         <div className="main main--watch">
           <Watch
             id={route.id}
             onSelect={openVideo}
+            onSelectCreator={openCreator}
+            onSelectCategory={openCategory}
             onBack={() => {
               window.location.hash = "";
               setRoute({ view: "browse" });
             }}
+          />
+          {footer}
+        </div>
+        {sidebar}
+        {drawerOpen && <button className="drawer-backdrop" aria-label="Close menu" onClick={() => setDrawerOpen(false)} />}
+        {fab}
+      </>
+    );
+  }
+
+  // ── creator profile ──
+
+  if (route.view === "creator") {
+    return (
+      <>
+        {ageGate}
+        {appBar}
+        {searchLayer}
+        <div className="main">
+          <CreatorPage
+            slug={route.slug}
+            kind={route.kind}
+            onSelect={openVideo}
+            onSelectCreator={openCreator}
+            onBack={goHome}
           />
           {footer}
         </div>
@@ -553,6 +807,7 @@ export default function App() {
                     key={v.id}
                     v={v}
                     onSelect={openVideo}
+                    onSelectCreator={openCreator}
                     meta={isSavedView ? undefined : [relativeDay(history.find((h) => h.id === v.id)?.ts ?? Date.now())]}
                   />
                 ))}
@@ -579,102 +834,182 @@ export default function App() {
       <div className="main">
         <div className="top-block">
           <div className="top-rows">
-            {channels.length > 0 && (
-              <div className="row-scroller no-scrollbar">
-                <div className="plates-track">
-                  <div className="plates">
-                    {channels.map((c) => (
-                      <a
-                        key={c.name}
-                        className="plate"
-                        href={`#/`}
-                        title={c.name}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          doSearch(c.name);
+            {categories.length > 0 && (
+              <section className="rail">
+                <RailHead title="Browse categories" />
+                <div className="row-scroller no-scrollbar">
+                  <div className="rail-track">
+                    <div className="chips">
+                      <button
+                        className={`chip chip--sm chip--ultra${ultra ? " chip--on" : ""}`}
+                        title="Ultra videos"
+                        onClick={() => {
+                          setUltra(!ultra);
+                          setCategory(null);
+                          setQuery("");
+                          setSearchText("");
+                          setQuality(null);
+                          window.scrollTo({ top: 0 });
                         }}
                       >
-                        <span className="plate__avatar">
-                          {c.v.thumb ? <img src={c.v.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span>{c.name.slice(0, 1).toUpperCase()}</span>}
-                        </span>
-                        <span className="plate__name">{c.name}</span>
-                      </a>
+                        Ultra
+                      </button>
+                      {categories.slice(0, 24).map((c) => (
+                        <button
+                          key={c.slug}
+                          className={`chip chip--sm${category?.slug === c.slug ? " chip--on" : ""}`}
+                          title={c.videoCount ? `${c.name} — ${c.videoCount.toLocaleString()} videos` : c.name}
+                          onClick={() => {
+                            setCategory(category?.slug === c.slug ? null : c);
+                            setUltra(false);
+                            setQuery("");
+                            setSearchText("");
+                            setQuality(null);
+                            window.scrollTo({ top: 0 });
+                          }}
+                        >
+                          {c.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {railCreators.length > 0 && !query && !category && !ultra && (
+              <section className="rail">
+                <RailHead title="Creators & channels" sub="tap a profile to see their videos" />
+                <div className="row-scroller no-scrollbar">
+                  <div className="rail-track">
+                    <div className="creator-rail">
+                      {railCreators.map((c) => (
+                        <CreatorTile key={`${c.kind}/${c.slug}`} c={c} onSelect={openCreator} />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            <section className="rail rail--tight">
+              <div className="row-scroller no-scrollbar">
+                <div className="rail-track">
+                  <div className="chips">
+                    {TAGS.map((t) => (
+                      <button
+                        key={t}
+                        className={`chip chip--sm${query.toLowerCase() === t.toLowerCase() ? " chip--on" : ""}`}
+                        onClick={() => doSearch(t)}
+                      >
+                        {t}
+                      </button>
                     ))}
                   </div>
                 </div>
               </div>
-            )}
-
-            {qualities.length > 0 && (
-              <div className="row-scroller no-scrollbar">
-                <div className="plates-track">
-                  <div className="chips">
-                    {qualities.map((q) => {
-                      const rep = videos.find((v) => v.quality === q);
-                      return (
-                        <button
-                          key={q}
-                          className={`chip${quality === q ? " chip--on" : ""}`}
-                          onClick={() => {
-                            setQuality(quality === q ? null : q);
-                            window.scrollTo({ top: 0 });
-                          }}
-                        >
-                          {rep?.thumb && <img className="chip__avatar" src={rep.thumb} alt="" loading="lazy" referrerPolicy="no-referrer" />}
-                          {q}
-                        </button>
-                      );
-                    })}
-                    <button
-                      className={`chip${vr ? " chip--on" : ""}`}
-                      onClick={() => {
-                        setVr(!vr);
-                        setQuality(null);
-                        window.scrollTo({ top: 0 });
-                      }}
-                    >
-                      VR
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="row-scroller no-scrollbar">
-              <div className="plates-track">
-                <div className="chips">
-                  {TAGS.map((t) => (
-                    <button
-                      key={t}
-                      className={`chip chip--sm${query.toLowerCase() === t.toLowerCase() ? " chip--on" : ""}`}
-                      onClick={() => doSearch(t)}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
+            </section>
           </div>
         </div>
 
         <div className="container">
-          {(query || quality || vr || list === "new") && (
-            <div className="section-head">
-              <div className="section-title">{heading}</div>
-              {total ? <div className="section-sub">{total.toLocaleString()} videos</div> : null}
-              {(query || quality) && (
+          <div className="section-head">
+            <div className="section-title">{heading}</div>
+            <div className="section-sub">
+              {total
+                ? `${total.toLocaleString()} videos`
+                : listLoading
+                  ? "loading…"
+                  : `${shown.length} videos`}
+            </div>
+            {(qualities.length > 0 || vr) && !listLoading && (
+              <div className="section-filters row-scroller no-scrollbar">
+                {qualities.map((q) => (
+                  <button
+                    key={q}
+                    className={`chip chip--sm${quality === q ? " chip--on" : ""}`}
+                    onClick={() => {
+                      setQuality(quality === q ? null : q);
+                      window.scrollTo({ top: 0 });
+                    }}
+                  >
+                    {q}
+                  </button>
+                ))}
                 <button
-                  className="section-action"
+                  className={`chip chip--sm${vr ? " chip--on" : ""}`}
                   onClick={() => {
-                    setQuery("");
-                    setSearchText("");
+                    setVr(!vr);
                     setQuality(null);
+                    window.scrollTo({ top: 0 });
                   }}
                 >
-                  Clear
+                  VR only
                 </button>
+              </div>
+            )}
+            {(query || quality || ultra || category) && (
+              <button
+                className="section-action"
+                onClick={() => {
+                  setQuery("");
+                  setSearchText("");
+                  setQuality(null);
+                  setUltra(false);
+                  setCategory(null);
+                  setSort("relevance");
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {query && (
+            <div className="filter-rows">
+              <div className="filter-row">
+                <span className="filter-row__label">Sort</span>
+                <div className="chips chips--tight">
+                  {SORTS.map(([id, label]) => (
+                    <button
+                      key={id}
+                      className={`chip chip--sm${sort === id ? " chip--on" : ""}`}
+                      onClick={() => {
+                        setSort(id);
+                        window.scrollTo({ top: 0 });
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {relatedSearches.length > 0 && (
+                <div className="filter-row">
+                  <span className="filter-row__label">Related</span>
+                  <div className="chips chips--tight">
+                    {relatedSearches.slice(0, 12).map((r) => (
+                      <button key={r.q} className="chip chip--sm chip--ghost" onClick={() => doSearch(r.q)}>
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
+            </div>
+          )}
+
+          {query && resultCreators.length > 0 && (
+            <div className="search-creators">
+              <RailHead
+                title="Creators"
+                sub={`${resultCreators.length} matching — tap for their profile`}
+              />
+              <div className="creator-rail row-scroller no-scrollbar">
+                {resultCreators.map((c) => (
+                  <CreatorTile key={`${c.kind}/${c.slug}`} c={c} onSelect={openCreator} />
+                ))}
+              </div>
             </div>
           )}
 
@@ -682,32 +1017,40 @@ export default function App() {
             <div className="grid">
               <CardSkeletons count={24} />
             </div>
-          ) : error ? (
+          ) : error && videos.length === 0 ? (
             <ErrorBox message={error} onRetry={() => void loadPage(1, false)} />
           ) : shown.length === 0 ? (
             <EmptyState query={query || undefined} />
           ) : (
             <div className="grid">
               {shown.map((v) => (
-                <VideoCard key={v.id} v={v} onSelect={openVideo} />
+                <VideoCard key={v.id} v={v} onSelect={openVideo} onSelectCreator={openCreator} />
               ))}
             </div>
           )}
 
-          {!listLoading && !error && shown.length > 0 && (
+          {!listLoading && shown.length > 0 && (hasMore || moreLoading ? (
             <div className="infinite-sentinel" ref={sentinel}>
               {moreLoading ? (
                 <>
                   <span className="spinner" />
                   Loading more…
                 </>
-              ) : hasMore ? (
-                "Scroll for more"
               ) : (
-                `${shown.length} videos`
+                "Scroll for more"
               )}
             </div>
-          )}
+          ) : (
+            <div className="list-end">
+              {moreError ? (
+                <button className="btn btn--glass" onClick={() => void loadPage(page + 1, true)}>
+                  Couldn’t load more — tap to retry
+                </button>
+              ) : (
+                <>That’s all {shown.length.toLocaleString()} videos</>
+              )}
+            </div>
+          ))}
 
           {history.length > 0 && !query && (
             <>
@@ -721,8 +1064,9 @@ export default function App() {
                 {history.slice(0, 12).map((h) => (
                   <VideoCard
                     key={h.id}
-                    v={{ id: h.id, title: h.title, url: h.url, thumb: h.thumb, channel: h.channel }}
+                    v={{ id: h.id, title: h.title, url: h.url, thumb: h.thumb, channel: h.channel, uploader: h.uploader }}
                     onSelect={openVideo}
+                    onSelectCreator={openCreator}
                     meta={[relativeDay(h.ts)]}
                   />
                 ))}

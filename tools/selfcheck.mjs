@@ -45,9 +45,17 @@ const PROBE = `(() => {
   out.infoAvatar = { rect: r(q('.unit__avatar')), st: cs(q('.unit__avatar'), 'width', 'height', 'borderRadius', 'backgroundColor') };
   out.infoTitle = { rect: r(q('.unit__title')), st: cs(q('.unit__title'), 'fontSize', 'lineHeight', 'fontWeight', 'color', 'whiteSpace', 'textOverflow') };
   out.infoMeta = { rect: r(q('.unit__meta')), st: cs(q('.unit__meta'), 'fontSize', 'color', 'marginTop', 'columnGap', 'display') };
-  out.plate = { rect: r(q('.plate')), st: cs(q('.plate'), 'gridTemplateRows', 'borderRadius', 'padding') };
-  out.plateAvatar = { rect: r(q('.plate__avatar')), st: cs(q('.plate__avatar'), 'width', 'height', 'borderRadius') };
-  out.plateName = { rect: r(q('.plate__name')), st: cs(q('.plate__name'), 'fontSize', 'lineHeight', 'color') };
+  // home rails: titled creator/channel rows (the old plate row is gone)
+  out.railHead = { rect: r(q('.rail-head')), st: cs(q('.rail-head'), 'display', 'alignItems', 'gap', 'margin') };
+  out.railTitle = { rect: r(q('.rail-head__title')), st: cs(q('.rail-head__title'), 'fontSize', 'lineHeight', 'letterSpacing', 'textTransform', 'color') };
+  out.creatorRail = { rect: r(q('.creator-rail')), st: cs(q('.creator-rail'), 'display', 'gap', 'padding') };
+  out.creatorAvatar = { rect: r(q('.creator-tile__avatar')), st: cs(q('.creator-tile__avatar'), 'width', 'height', 'borderRadius') };
+  out.creatorName = { rect: r(q('.creator-tile__name')), st: cs(q('.creator-tile__name'), 'fontSize', 'lineHeight', 'color') };
+  out.cardCircle = {
+    rect: r(q('.unit__avatar')),
+    st: cs(q('.unit__avatar'), 'width', 'height', 'borderRadius'),
+    src: q('.unit__avatar img')?.getAttribute('src') || null,
+  };
   out.chip = { rect: r(q('.chip')), st: cs(q('.chip'), 'height', 'padding', 'borderRadius', 'fontSize', 'backgroundColor', 'gap') };
   out.chipSm = { rect: r(q('.chip--sm')), st: cs(q('.chip--sm'), 'height', 'padding', 'fontSize') };
   out.sidebar = { rect: r(q('.sidebar')), st: cs(q('.sidebar'), 'position', 'width', 'transform', 'backgroundColor', 'backdropFilter', 'zIndex') };

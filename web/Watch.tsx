@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { resolveVideo, type ResolveResult, type Video } from "./api";
+import { resolveVideo, type Category, type ProfileRef, type ResolveResult, type Video } from "./api";
 import Player from "./Player";
-import { ErrorBox, RailTile, TrainTile, VideoCard } from "./components";
+import { CreatorLine, ErrorBox, RailTile, TrainTile, VideoCard } from "./components";
 import { isSaved, onStoreChange, saveHistoryEntry, toggleSaved } from "./store";
 
 const I = {
@@ -36,10 +36,14 @@ export default function Watch({
   id,
   onSelect,
   onBack,
+  onSelectCreator,
+  onSelectCategory,
 }: {
   id: string;
   onSelect: (v: Video) => void;
   onBack: () => void;
+  onSelectCreator: (c: ProfileRef) => void;
+  onSelectCategory: (c: Category) => void;
 }) {
   const [data, setData] = useState<ResolveResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,14 +192,47 @@ export default function Watch({
         <div className="watch__info">
           <div className="watch__meta-row">
             <div className="watch__creator">
-              <a
-                className="up c-action"
-                href={data.url}
-                target="_blank"
-                rel="noopener noreferrer nofollow"
-              >
-                faphouse2.com
-              </a>
+              {data.studio?.avatar && (
+                <img
+                  className="watch__studio-avatar"
+                  src={data.studio.avatar}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              {data.studio?.slug && data.studio.name ? (
+                <a
+                  className="up c-action"
+                  href={data.studio.url}
+                  title={`${data.studio.name} on faphouse2.com`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onSelectCreator({
+                      kind:
+                        data.studio!.kind === "studio"
+                          ? "studio"
+                          : data.studio!.kind === "pornstar"
+                            ? "pornstar"
+                            : "creator",
+                      slug: data.studio!.slug!,
+                      name: data.studio!.name!,
+                      avatar: data.studio!.avatar,
+                    });
+                  }}
+                >
+                  {data.studio.name}
+                </a>
+              ) : (
+                <a
+                  className="up c-action"
+                  href={data.url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                >
+                  faphouse2.com
+                </a>
+              )}
               {copied && <span className="t-label-11 c-2">link copied</span>}
             </div>
             <div className="watch__actions">
@@ -235,6 +272,32 @@ export default function Watch({
 
           {data.description && <p className="watch__desc">{data.description}</p>}
 
+          {data.cast && data.cast.length > 0 && (
+            <div className="watch__cast">
+              <div className="watch__cast-head">In this video</div>
+              <div className="watch__cast-row row-scroller no-scrollbar">
+                {data.cast.map((c) => (
+                  <CreatorLine key={`${c.kind}/${c.slug}`} c={c} onSelect={onSelectCreator} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {data.categories && data.categories.length > 0 && (
+            <div className="watch__cats">
+              {data.categories.map((c) => (
+                <button
+                  key={c.slug}
+                  className="chip chip--sm"
+                  title={`Browse ${c.name}`}
+                  onClick={() => onSelectCategory(c)}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="watch__buttons">
             <a className="btn" href={data.url} target="_blank" rel="noopener noreferrer nofollow">
               Watch full video
@@ -261,7 +324,7 @@ export default function Watch({
             <div className="watch__related-head">Related videos</div>
             <div className="grid">
               {related.map((v) => (
-                <VideoCard key={v.id} v={v} onSelect={onSelect} />
+                <VideoCard key={v.id} v={v} onSelect={onSelect} onSelectCreator={onSelectCreator} />
               ))}
             </div>
           </div>

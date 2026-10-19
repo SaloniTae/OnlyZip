@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { holdPreviews } from "./preview";
 import "./player.css";
 
 const SEEK_STEP = 10;
@@ -117,6 +118,27 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     setMenuOpen(false);
     setScrub({ show: false, pct: 0, t: 0 });
   }, [src]);
+
+  // While this player runs on screen, the surrounding thumbnails stop
+  // streaming — the video being watched is the first thing on the connection.
+  // The moment the stage scrolls out of view, the Rails below (related / up
+  // next) take over and their previews resume.
+  const [stageNear, setStageNear] = useState(true);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([e]) => setStageNear(!e || e.intersectionRatio > 0.25),
+      { threshold: [0, 0.25, 0.5, 1] },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    holdPreviews(playing && stageNear);
+    return () => holdPreviews(false);
+  }, [playing, stageNear]);
 
   // ── video element events ──
   useEffect(() => {
@@ -319,25 +341,22 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     if (!dragging.current) setScrub((s) => ({ ...s, show: false }));
   };
 
-  // ── touch: tap the CENTRE toggles play/pause, tap anywhere else toggles the
-  //    chrome, double-tap near an edge seeks ±10s.
-  //    Deliberately NO swipe gestures: a horizontal drag over the video is
-  //    claimed by the OS/browser (swipe-back), which is what made the page
-  //    jump away, and the old brightness/volume swipe handled vertical drags.
+  // ── tap / click on the picture (never on player chrome) toggles ALL of the
+  //    chrome at once. Playback is driven by the centre button, which is part
+  //    of that chrome (and therefore hidden with it).
+  //    Deliberately NO swipe or double-tap gestures: a horizontal drag over
+  //    the video is claimed by the OS/browser (swipe-back), which is what made
+  //    the page jump away.
   const touch = useRef<{ x: number; y: number; time: number } | null>(null);
-  const lastTap = useRef<{ t: number; x: number }>({ t: 0, x: 0 });
-
-  /** Is a point inside the central play/pause zone of the stage? */
-  const isCenterZone = (clientX: number, clientY: number) => {
-    const el = stageRef.current;
-    if (!el) return false;
-    const r = el.getBoundingClientRect();
-    const cx = (clientX - r.left) / r.width;
-    const cy = (clientY - r.top) / r.height;
-    return cx > 0.3 && cx < 0.7 && cy > 0.25 && cy < 0.75;
-  };
+  // when a mouse move surfaces the chrome, the click that usually follows it
+  // must not immediately hide it again
+  const revealedByMove = useRef(0);
 
   const toggleUI = () => {
+    if (Date.now() - revealedByMove.current < 400) {
+      revealedByMove.current = 0;
+      return;
+    }
     setShowUI((s) => {
       const next = !s;
       if (next) scheduleHide();
@@ -350,7 +369,7 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
       touch.current = null;
       return;
     }
-    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, .x-vol")) return;
+    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, .x-vol, input")) return;
     const t = e.touches[0];
     touch.current = { x: t.clientX, y: t.clientY, time: Date.now() };
   };
@@ -363,51 +382,38 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     // anything that moved was a page scroll, not a tap on the video
     if (Math.abs(t.clientX - st.x) > SWIPE_THRESHOLD || Math.abs(t.clientY - st.y) > SWIPE_THRESHOLD) return;
     if (Date.now() - st.time > 350) return;
-    const x = t.clientX;
-    const w = window.innerWidth;
-    // double-tap to seek only when it lands away from the central zone
-    if (
-      lastTap.current.t &&
-      Date.now() - lastTap.current.t < 280 &&
-      Math.abs(x - lastTap.current.x) < 60 &&
-      !isCenterZone(t.clientX, t.clientY)
-    ) {
-      lastTap.current = { t: 0, x: 0 };
-      if (hasStream()) seekBy(x < w * 0.5 ? -SEEK_STEP : SEEK_STEP);
-      return;
-    }
-    lastTap.current = { t: Date.now(), x };
-    if (isCenterZone(t.clientX, t.clientY)) {
-      togglePlay();
-      revealUI();
-    } else {
-      toggleUI();
-    }
+    toggleUI();
   };
 
-  // mouse / pen: tapping the centre plays or pauses, tapping elsewhere toggles UI
+  // mouse / pen: clicking the picture (not the chrome) toggles the chrome
   const onStagePointerUp = (e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
     if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, .x-vol, input")) return;
-    if (isCenterZone(e.clientX, e.clientY)) {
-      togglePlay();
-      revealUI();
-    } else {
-      toggleUI();
-    }
+    toggleUI();
+  };
+
+  // Pointer events only (never mousemove): a tap on a touch screen also emits
+  // compatibility mouse events, which would immediately re-show the chrome we
+  // just hid.
+  const onStagePointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    if (!showUI) revealedByMove.current = Date.now();
+    revealUI();
   };
 
   const dur = duration || 0;
   const playedPct = dur > 0 ? (currentTime / dur) * 100 : 0;
   const loadedPct = dur > 0 ? clamp((bufferedEnd / dur) * 100, 0, 100) : 0;
-  const controlsHidden = !showUI && playing;
+  // the chrome is hidden purely by the toggle — also while paused — so a tap
+  // always hides or shows ALL of it
+  const controlsHidden = !showUI;
 
   return (
     <div
       ref={stageRef}
       className={`player-stage${isFs ? " web-fs" : ""}${showUI ? " player-stage--ui" : ""}${controlsHidden ? " player-stage--hidden" : ""}`}
       onPointerUp={onStagePointerUp}
-      onMouseMove={revealUI}
+      onPointerMove={onStagePointerMove}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >

@@ -12,6 +12,9 @@ import { fileURLToPath } from "node:url";
 import {
   searchVideos,
   listVideos,
+  listCreators,
+  getCreator,
+  listCategories,
   fetchUpstream,
   parseListing,
   resolveVideo,
@@ -29,7 +32,9 @@ function json(res, code, data) {
   const body = JSON.stringify(data);
   res.writeHead(code, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "public, max-age=120",
+    // everything here is read live from faphouse2.com — a short edge/browser
+    // cache keeps it snappy without ever going stale
+    "Cache-Control": "public, max-age=30, stale-while-revalidate=120",
   });
   res.end(body);
 }
@@ -48,7 +53,9 @@ async function handleApi(req, res, url) {
       const page = Math.max(1, Number(url.searchParams.get("page") || 1) || 1);
       const orientation = url.searchParams.get("orientation") || "straight";
       const vr = url.searchParams.get("vr") === "1";
-      const data = await searchVideos(q, { page, orientation, vr });
+      const rawSort = (url.searchParams.get("sort") || "relevance").toLowerCase();
+      const sort = ["relevance", "new", "popular"].includes(rawSort) ? rawSort : "relevance";
+      const data = await searchVideos(q, { page, orientation, vr, sort });
       return json(res, 200, data);
     }
 
@@ -57,7 +64,37 @@ async function handleApi(req, res, url) {
       const list = url.searchParams.get("list") || "all";
       const orientation = url.searchParams.get("orientation") || "straight";
       const vr = url.searchParams.get("vr") === "1";
-      const data = await listVideos({ list, orientation, vr, page });
+      const ultra = url.searchParams.get("ultra") === "1";
+      const rawCategory = (url.searchParams.get("category") || "").trim();
+      // only upstream category slugs ever reach the URL we build
+      const category = /^[a-z0-9-]{1,64}$/i.test(rawCategory) ? rawCategory : undefined;
+      if (rawCategory && !category) return fail(res, 400, "Bad category");
+      const data = await listVideos({ list, orientation, vr, page, category, ultra });
+      return json(res, 200, data);
+    }
+
+    // Creator search (/models?q=) + creator directory
+    if (p === "/api/creators") {
+      const q = (url.searchParams.get("q") || "").trim();
+      const page = Math.max(1, Number(url.searchParams.get("page") || 1) || 1);
+      const data = await listCreators({ q, page });
+      return json(res, 200, data);
+    }
+
+    // One creator: identity, bio, and their own video grid (paged)
+    if (p === "/api/creator") {
+      const slug = url.searchParams.get("slug") || url.searchParams.get("url") || "";
+      if (!slug) return fail(res, 400, "Missing slug");
+      const page = Math.max(1, Number(url.searchParams.get("page") || 1) || 1);
+      const rawKind = (url.searchParams.get("kind") || "creator").toLowerCase();
+      const kind = ["creator", "pornstar", "studio"].includes(rawKind) ? rawKind : "creator";
+      const data = await getCreator(slug, { page, kind });
+      return json(res, 200, data);
+    }
+
+    // Live category index for the filter bar
+    if (p === "/api/categories") {
+      const data = await listCategories();
       return json(res, 200, data);
     }
 
@@ -75,7 +112,11 @@ async function handleApi(req, res, url) {
       const target = url.searchParams.get("path");
       if (!target || !target.startsWith("/")) return fail(res, 400, "Missing path");
       // allow-list: only listing-style paths, no api/query endpoints
-      if (!/^\/(?:gay\/|transgender\/)?(?:videos|categories|studios|pornstars|search)/.test(target))
+      if (
+        !/^\/(?:gay\/|transgender\/)?(?:videos|categories|studios|pornstars|models|ultra|search|c\/)/.test(
+          target,
+        )
+      )
         return fail(res, 400, "Path not allowed");
       if (/\/api\/|custodian|\?format=|\?cid=/.test(target))
         return fail(res, 400, "Path not allowed");
