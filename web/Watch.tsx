@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { resolveVideo, type ResolveResult, type Video } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { resolveVideo, type Category, type ProfileRef, type ResolveResult, type Video } from "./api";
 import Player from "./Player";
-import { ErrorBox, RailTile, TrainTile, VideoCard } from "./components";
+import { CreatorLine, ErrorBox, RailTile, TrainTile, VideoCard } from "./components";
 import { isSaved, onStoreChange, saveHistoryEntry, toggleSaved } from "./store";
 
 const I = {
@@ -36,18 +36,44 @@ export default function Watch({
   id,
   onSelect,
   onBack,
+  onSelectCreator,
+  onSelectCategory,
 }: {
   id: string;
   onSelect: (v: Video) => void;
   onBack: () => void;
+  onSelectCreator: (c: ProfileRef) => void;
+  onSelectCategory: (c: Category) => void;
 }) {
   const [data, setData] = useState<ResolveResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(() => isSaved(id));
   const [copied, setCopied] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => onStoreChange(() => setSaved(isSaved(id))), [id]);
+
+  // Keep the related rail exactly as tall as the player so its 16:9 tiles
+  // never overhang below the video (the stage is width-constrained on laptop
+  // widths, so its rendered height is smaller than the viewport-based cap).
+  useEffect(() => {
+    const stage = stageRef.current;
+    const rail = railRef.current;
+    if (!stage || !rail) return;
+    const sync = () => {
+      rail.style.maxHeight = `${Math.round(stage.getBoundingClientRect().height)}px`;
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(stage);
+    window.addEventListener("resize", sync);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, [data]);
 
   useEffect(() => {
     let alive = true;
@@ -103,7 +129,7 @@ export default function Watch({
   }
 
   const related = data.related.slice(0, 24);
-  const rail = related.slice(0, 12);
+  const rail = related.slice(0, 16);
   const train = related.slice(0, 14);
 
   const share = async () => {
@@ -120,8 +146,14 @@ export default function Watch({
   return (
     <div className="container">
       <div className="watch">
+        <div className="watch__head">
+          <div className="watch__title" title={data.title}>
+            {data.title}
+          </div>
+        </div>
+
         <div className="watch__top">
-          <div className="watch__stage">
+          <div className="watch__stage" ref={stageRef}>
             {data.preview ? (
               <Player src={data.preview} poster={data.poster} title={data.title} />
             ) : (
@@ -150,7 +182,7 @@ export default function Watch({
             )}
           </div>
 
-          <div className="watch__rail">
+          <div className="watch__rail" ref={railRef}>
             {rail.map((v) => (
               <RailTile key={v.id} v={v} onSelect={onSelect} />
             ))}
@@ -158,9 +190,50 @@ export default function Watch({
         </div>
 
         <div className="watch__info">
-          <div className="watch__title-row">
-            <div className="watch__title" title={data.title}>
-              {data.title}
+          <div className="watch__meta-row">
+            <div className="watch__creator">
+              {data.studio?.avatar && (
+                <img
+                  className="watch__studio-avatar"
+                  src={data.studio.avatar}
+                  alt=""
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                />
+              )}
+              {data.studio?.slug && data.studio.name ? (
+                <a
+                  className="up c-action"
+                  href={data.studio.url}
+                  title={`${data.studio.name} on faphouse2.com`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onSelectCreator({
+                      kind:
+                        data.studio!.kind === "studio"
+                          ? "studio"
+                          : data.studio!.kind === "pornstar"
+                            ? "pornstar"
+                            : "creator",
+                      slug: data.studio!.slug!,
+                      name: data.studio!.name!,
+                      avatar: data.studio!.avatar,
+                    });
+                  }}
+                >
+                  {data.studio.name}
+                </a>
+              ) : (
+                <a
+                  className="up c-action"
+                  href={data.url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                >
+                  faphouse2.com
+                </a>
+              )}
+              {copied && <span className="t-label-11 c-2">link copied</span>}
             </div>
             <div className="watch__actions">
               <button
@@ -197,27 +270,33 @@ export default function Watch({
             </div>
           </div>
 
-          <div className="watch__creator">
-            <a
-              className="up c-action"
-              href={data.url}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-            >
-              faphouse2.com
-            </a>
-            {copied && <span className="t-label-11 c-2">link copied</span>}
-          </div>
+          {data.description && <p className="watch__desc">{data.description}</p>}
 
-          {train.length > 0 && (
-            <div className="watch__train row-scroller no-scrollbar">
-              {train.map((v) => (
-                <TrainTile key={v.id} v={v} onSelect={onSelect} />
-              ))}
+          {data.cast && data.cast.length > 0 && (
+            <div className="watch__cast">
+              <div className="watch__cast-head">In this video</div>
+              <div className="watch__cast-row row-scroller no-scrollbar">
+                {data.cast.map((c) => (
+                  <CreatorLine key={`${c.kind}/${c.slug}`} c={c} onSelect={onSelectCreator} />
+                ))}
+              </div>
             </div>
           )}
 
-          {data.description && <p className="watch__desc">{data.description}</p>}
+          {data.categories && data.categories.length > 0 && (
+            <div className="watch__cats">
+              {data.categories.map((c) => (
+                <button
+                  key={c.slug}
+                  className="chip chip--sm"
+                  title={`Browse ${c.name}`}
+                  onClick={() => onSelectCategory(c)}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="watch__buttons">
             <a className="btn" href={data.url} target="_blank" rel="noopener noreferrer nofollow">
@@ -229,12 +308,23 @@ export default function Watch({
           </div>
         </div>
 
+        {train.length > 0 && (
+          <div className="watch__strip">
+            <div className="watch__strip-head">Up next</div>
+            <div className="watch__train row-scroller no-scrollbar">
+              {train.map((v) => (
+                <TrainTile key={v.id} v={v} onSelect={onSelect} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {related.length > 0 && (
           <div className="watch__related">
             <div className="watch__related-head">Related videos</div>
             <div className="grid">
               {related.map((v) => (
-                <VideoCard key={v.id} v={v} onSelect={onSelect} />
+                <VideoCard key={v.id} v={v} onSelect={onSelect} onSelectCreator={onSelectCreator} />
               ))}
             </div>
           </div>

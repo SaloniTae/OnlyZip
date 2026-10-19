@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { holdPreviews } from "./preview";
 import "./player.css";
 
 const SEEK_STEP = 10;
@@ -20,8 +21,8 @@ function formatTime(sec: number) {
 const Icon = {
   play: <path d="M8 5v14l11-7z" />,
   pause: <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />,
-  rewind: <path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z" />,
-  forward: <path d="M13 6v12l8.5-6L13 6zM4 18l8.5-6L4 6v12z" />,
+  rewind: <path d="M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" />,
+  forward: <path d="M18.4 10.6C16.55 8.99 14.15 8 11.5 8c-4.65 0-8.58 3.03-9.96 7.22L3.9 16c1.05-3.19 4.05-5.5 7.6-5.5 1.95 0 3.73.72 5.12 1.88L13 17h9V8l-3.6 2.6z" />,
   volume: (
     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
   ),
@@ -67,6 +68,7 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
   const [playing, setPlaying] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [muted, setMuted] = useState(true);
+  const [volume, setVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [bufferedEnd, setBufferedEnd] = useState(0);
@@ -117,6 +119,27 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     setScrub({ show: false, pct: 0, t: 0 });
   }, [src]);
 
+  // While this player runs on screen, the surrounding thumbnails stop
+  // streaming — the video being watched is the first thing on the connection.
+  // The moment the stage scrolls out of view, the Rails below (related / up
+  // next) take over and their previews resume.
+  const [stageNear, setStageNear] = useState(true);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([e]) => setStageNear(!e || e.intersectionRatio > 0.25),
+      { threshold: [0, 0.25, 0.5, 1] },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    holdPreviews(playing && stageNear);
+    return () => holdPreviews(false);
+  }, [playing, stageNear]);
+
   // ── video element events ──
   useEffect(() => {
     const v = videoRef.current;
@@ -137,7 +160,10 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     const onWaiting = () => setWaiting(true);
     const onPlaying = () => setWaiting(false);
     const onCanPlay = () => setWaiting(false);
-    const onVolume = () => setMuted(v.muted);
+    const onVolume = () => {
+      setMuted(v.muted);
+      setVolume(v.muted ? 0 : v.volume);
+    };
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
@@ -181,12 +207,23 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     [revealUI],
   );
 
-  /** Single volume button: mute / unmute (no slider, no swipe). */
+  /** Volume button: mute / unmute. Paired with a slide-out slider (beeg style). */
   const toggleMute = () => {
     const v = videoRef.current;
     if (!v) return;
     v.muted = !v.muted;
     if (!v.muted && v.volume === 0) v.volume = 1;
+    setMuted(v.muted);
+    setVolume(v.muted ? 0 : v.volume);
+    revealUI();
+  };
+
+  const changeVolume = (val: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = val;
+    v.muted = val === 0;
+    setVolume(val);
     setMuted(v.muted);
     revealUI();
   };
@@ -206,15 +243,34 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     const stage = stageRef.current;
     if (!stage) return;
     try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await stage.requestFullscreen();
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await stage.requestFullscreen();
+        // On phones/tablets, force landscape to match the 16:9 video.
+        try {
+          await (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape");
+        } catch {
+          /* orientation lock unsupported (desktop) — ignore */
+        }
+      }
     } catch {
       /* fallback handled via fullscreenchange */
     }
   };
 
   useEffect(() => {
-    const onFsChange = () => setIsFs(!!document.fullscreenElement);
+    const onFsChange = () => {
+      const fs = !!document.fullscreenElement;
+      setIsFs(fs);
+      if (!fs) {
+        try {
+          (screen.orientation as unknown as { unlock?: () => void })?.unlock?.();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
   }, []);
@@ -285,19 +341,35 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     if (!dragging.current) setScrub((s) => ({ ...s, show: false }));
   };
 
-  // ── touch: tap toggles the chrome, double-tap seeks ±10s.
-  //    Deliberately NO swipe gestures: a horizontal drag over the video is
-  //    claimed by the OS/browser (swipe-back), which is what made the page
-  //    jump away, and the old brightness/volume swipe handled vertical drags.
+  // ── tap / click on the picture (never on player chrome) toggles ALL of the
+  //    chrome at once. Playback is driven by the centre button, which is part
+  //    of that chrome (and therefore hidden with it).
+  //    Deliberately NO swipe or double-tap gestures: a horizontal drag over
+  //    the video is claimed by the OS/browser (swipe-back), which is what made
+  //    the page jump away.
   const touch = useRef<{ x: number; y: number; time: number } | null>(null);
-  const lastTap = useRef<{ t: number; x: number }>({ t: 0, x: 0 });
+  // when a mouse move surfaces the chrome, the click that usually follows it
+  // must not immediately hide it again
+  const revealedByMove = useRef(0);
+
+  const toggleUI = () => {
+    if (Date.now() - revealedByMove.current < 400) {
+      revealedByMove.current = 0;
+      return;
+    }
+    setShowUI((s) => {
+      const next = !s;
+      if (next) scheduleHide();
+      return next;
+    });
+  };
 
   const onTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length !== 1) {
       touch.current = null;
       return;
     }
-    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu")) return;
+    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, .x-vol, input")) return;
     const t = e.touches[0];
     touch.current = { x: t.clientX, y: t.clientY, time: Date.now() };
   };
@@ -310,37 +382,38 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
     // anything that moved was a page scroll, not a tap on the video
     if (Math.abs(t.clientX - st.x) > SWIPE_THRESHOLD || Math.abs(t.clientY - st.y) > SWIPE_THRESHOLD) return;
     if (Date.now() - st.time > 350) return;
-    const x = t.clientX;
-    const w = window.innerWidth;
-    if (lastTap.current.t && Date.now() - lastTap.current.t < 280 && Math.abs(x - lastTap.current.x) < 60) {
-      lastTap.current = { t: 0, x: 0 };
-      if (hasStream()) seekBy(x < w * 0.5 ? -SEEK_STEP : SEEK_STEP);
-      return;
-    }
-    lastTap.current = { t: Date.now(), x };
-    setShowUI((s) => !s);
-    scheduleHide();
+    toggleUI();
   };
 
-  // mouse / pen only: tapping the surface plays or pauses
+  // mouse / pen: clicking the picture (not the chrome) toggles the chrome
   const onStagePointerUp = (e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
-    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, input")) return;
+    if ((e.target as HTMLElement).closest("button, .x-seeker, .x-menu, .x-vol, input")) return;
+    toggleUI();
+  };
+
+  // Pointer events only (never mousemove): a tap on a touch screen also emits
+  // compatibility mouse events, which would immediately re-show the chrome we
+  // just hid.
+  const onStagePointerMove = (e: React.PointerEvent) => {
+    if (e.pointerType === "touch") return;
+    if (!showUI) revealedByMove.current = Date.now();
     revealUI();
-    togglePlay();
   };
 
   const dur = duration || 0;
   const playedPct = dur > 0 ? (currentTime / dur) * 100 : 0;
   const loadedPct = dur > 0 ? clamp((bufferedEnd / dur) * 100, 0, 100) : 0;
-  const controlsHidden = !showUI && playing;
+  // the chrome is hidden purely by the toggle — also while paused — so a tap
+  // always hides or shows ALL of it
+  const controlsHidden = !showUI;
 
   return (
     <div
       ref={stageRef}
       className={`player-stage${isFs ? " web-fs" : ""}${showUI ? " player-stage--ui" : ""}${controlsHidden ? " player-stage--hidden" : ""}`}
       onPointerUp={onStagePointerUp}
-      onMouseMove={revealUI}
+      onPointerMove={onStagePointerMove}
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
@@ -387,30 +460,46 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
         </div>
       )}
 
+      {/* centre play / pause — the primary control; tapping it toggles playback */}
+      <button
+        className={`x-center${playing ? " x-center--playing" : ""}`}
+        aria-label={playing ? "Pause" : "Play"}
+        onClick={(e) => {
+          e.stopPropagation();
+          togglePlay();
+          revealUI();
+        }}
+      >
+        <svg viewBox="0 0 24 24">{playing ? Icon.pause : Icon.play}</svg>
+      </button>
+
       {/* top control row */}
       <div className="x-top">
         <div className="x-top__side">
-          <button
-            className="x-btn"
-            aria-label={playing ? "Pause" : "Play"}
-            onClick={(e) => {
-              e.stopPropagation();
-              togglePlay();
-            }}
-          >
-            <svg viewBox="0 0 24 24">{playing ? Icon.pause : Icon.play}</svg>
-          </button>
-          <button
-            className="x-btn"
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={!muted}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleMute();
-            }}
-          >
-            <svg viewBox="0 0 24 24">{muted ? Icon.muted : Icon.volume}</svg>
-          </button>
+          <div className="x-vol">
+            <button
+              className="x-btn"
+              aria-label={muted ? "Unmute" : "Mute"}
+              aria-pressed={!muted}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleMute();
+              }}
+            >
+              <svg viewBox="0 0 24 24">{muted ? Icon.muted : Icon.volume}</svg>
+            </button>
+            <input
+              className="x-vol__slider"
+              type="range"
+              min={0}
+              max={1}
+              step={0.02}
+              value={muted ? 0 : volume}
+              aria-label="Volume"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => changeVolume(Number(e.target.value))}
+            />
+          </div>
         </div>
 
         <div className="x-top__spacer" />
@@ -489,6 +578,10 @@ export default function Player({ src, poster, title, chip = "TRAILER" }: PlayerP
       </div>
 
       {/* timeline */}
+      <div className="x-time">
+        <span>{formatTime(currentTime)}</span>
+        <span className="rest">/ {formatTime(dur)}</span>
+      </div>
       <div className="x-timeline">
         <div
           ref={progressRef}

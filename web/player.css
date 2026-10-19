@@ -11,6 +11,7 @@
   background: rgb(var(--x-color-background-rgb));
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
   /* pan-y keeps vertical page scrolling, pinch-zoom stays available, double-tap
      zoom is off and horizontal drags are not claimed by the browser (which used
      to fire swipe-to-go-back while dragging over the video). */
@@ -44,13 +45,42 @@
 
 .player-stage.web-fs .x-player__video { border-radius: 0; object-fit: contain; }
 
+/* ── control scrims (fade the video edges so chrome stays legible) ─────── */
+
+.player-stage::before,
+.player-stage::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.2s ease-in;
+}
+
+.player-stage::before {
+  top: 0;
+  height: 88px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent);
+}
+
+.player-stage::after {
+  bottom: 0;
+  height: 96px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+}
+
+.player-stage--hidden::before,
+.player-stage--hidden::after { opacity: 0; }
+
 /* ── top control row ─────────────────────────────────────────────────── */
 
 .x-top {
   position: absolute;
-  top: 12px;
-  left: 12px;
-  right: 12px;
+  top: 16px;
+  left: 16px;
+  right: 16px;
   z-index: 3;
   display: flex;
   align-items: center;
@@ -88,13 +118,103 @@
 .x-btn:hover { background: rgba(0, 0, 0, 0.42); }
 .x-btn--plain { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
 
+/* ── volume (beeg style: button + slide-out slider on hover) ───────────── */
+
+.x-vol {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding-right: 0;
+  border-radius: 18px;
+  background: transparent;
+  transition: background-color 0.2s, padding-right 0.2s;
+}
+
+.x-vol__slider {
+  width: 0;
+  height: 4px;
+  margin-left: 0;
+  opacity: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: width 0.2s ease, opacity 0.2s ease, margin-left 0.2s ease;
+}
+
+/* reveal the slider when hovering the volume cluster (pointer devices only) */
+@media (hover: hover) {
+  .x-vol:hover {
+    background: rgba(0, 0, 0, 0.32);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    backdrop-filter: saturate(180%) blur(12px);
+    padding-right: 12px;
+  }
+  .x-vol:hover .x-vol__slider {
+    width: 72px;
+    margin-left: 8px;
+    opacity: 1;
+  }
+}
+
+.x-vol__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+}
+
+.x-vol__slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+}
+
+/* ── centre play / pause ───────────────────────────────────────────────── */
+
+.x-center {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  backdrop-filter: saturate(180%) blur(12px);
+  color: #fff;
+  transition: opacity 0.2s ease-in, transform 0.15s ease, background-color 0.2s;
+}
+
+.x-center svg { width: 34px; height: 34px; fill: currentColor; }
+.x-center:hover { background: rgba(0, 0, 0, 0.55); transform: translate(-50%, -50%) scale(1.05); }
+.player-stage--hidden .x-center { opacity: 0; pointer-events: none; }
+
+@media (max-width: 599.98px) {
+  .x-center { width: 60px; height: 60px; }
+  .x-center svg { width: 30px; height: 30px; }
+}
+
 /* ── settings menu ──────────────────────────────────────────────────── */
 
 .x-menu-host { position: relative; }
 
 .x-menu {
   position: absolute;
-  bottom: 44px;
+  top: 44px;
   right: 0;
   z-index: 6;
   min-width: 168px;
@@ -104,7 +224,8 @@
   box-shadow: 0 5px 22px 4px rgba(0, 0, 0, 0.12), 0 12px 17px 2px rgba(0, 0, 0, 0.14), 0 7px 8px -4px rgba(0, 0, 0, 0.2);
   opacity: 0;
   visibility: hidden;
-  transform: translateY(4px);
+  transform: translateY(-4px);
+  transform-origin: top right;
   transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
 }
 
@@ -142,14 +263,34 @@
 
 .x-timeline {
   position: absolute;
-  left: 24px;
-  right: 24px;
-  bottom: 0;
+  left: 20px;
+  right: 20px;
+  bottom: 16px;
   z-index: 4;
   height: 24px;
-  transform: translateY(12px);
   transition: opacity 0.2s ease-in;
 }
+
+/* persistent current / duration readout, sitting just above the seeker */
+.x-time {
+  position: absolute;
+  left: 20px;
+  bottom: 44px;
+  z-index: 4;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-digits);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: 0.2px;
+  color: var(--x-color-text-body-clear);
+  text-shadow: var(--text-shadow-1);
+  pointer-events: none;
+  transition: opacity 0.2s ease-in;
+}
+
+.x-time .rest { color: rgba(255, 255, 255, 0.6); }
 
 .x-seeker {
   position: relative;
@@ -279,21 +420,22 @@
 
 .x-chip {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  right: 20px;
+  bottom: 48px;
   z-index: 3;
   display: inline-flex;
   align-items: center;
-  height: 32px;
+  height: 28px;
   padding: 0 12px;
-  border-radius: 16px;
-  background: rgba(0, 0, 0, 0.24);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.42);
   -webkit-backdrop-filter: saturate(180%) blur(12px);
   backdrop-filter: saturate(180%) blur(12px);
   color: #fff;
-  font-size: 14px;
-  line-height: 20px;
-  letter-spacing: 0.25px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
 }
 
 /* ── loading overlay ────────────────────────────────────────────────── */
@@ -352,10 +494,15 @@
 
 /* controls hidden → fade the chrome out */
 .player-stage--hidden .x-top,
+.player-stage--hidden .x-time,
+.player-stage--hidden .x-chip,
 .player-stage--hidden .x-timeline { opacity: 0; pointer-events: none; }
 
 @media (max-width: 599.98px) {
-  .x-timeline { left: 24px; right: 24px; }
+  .x-top { top: 12px; left: 12px; right: 12px; }
+  .x-timeline { left: 16px; right: 16px; bottom: 14px; }
+  .x-time { left: 16px; bottom: 42px; font-size: 12px; }
+  .x-chip { right: 16px; bottom: 44px; }
   .x-drag-time { bottom: 56px; font-size: 20px; line-height: 28px; }
   .x-preview { display: none !important; }
 }

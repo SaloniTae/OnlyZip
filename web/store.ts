@@ -1,12 +1,15 @@
 // Tiny localStorage store for watch history + saved videos, with a change
 // emitter so cards and the sidebar stay in sync.
 
+import type { Uploader } from "./api";
+
 export interface HistoryEntry {
   id: string;
   title: string;
   thumb?: string;
   url: string;
   channel?: string;
+  uploader?: Uploader;
   ts: number;
 }
 
